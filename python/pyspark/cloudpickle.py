@@ -560,8 +560,9 @@ class CloudPickler(pickle.Pickler):
             ]
 
 
-        itemgetter_obj = ctypes.cast(ctypes.c_void_p(id(obj)), ctypes.POINTER(ItemGetterType)).contents
-        return self.save_reduce(operator.itemgetter, (itemgetter_obj.item,))
+        obj = ctypes.cast(ctypes.c_void_p(id(obj)), ctypes.POINTER(ItemGetterType)).contents
+        return self.save_reduce(operator.itemgetter,
+                obj.item if obj.nitems > 1 else (obj.item,))
 
     if PyObject_HEAD:
         dispatch[operator.itemgetter] = save_itemgetter
@@ -933,7 +934,7 @@ def _change_cell_value(cell, newval):
 Note: These can never be renamed due to client compatibility issues"""
 
 def _getobject(modname, attribute):
-    mod = __import__(modname)
+    mod = __import__(modname, fromlist=[attribute])
     return mod.__dict__[attribute]
 
 def _generateImage(size, mode, str_rep):

@@ -19,6 +19,7 @@ package org.apache.spark.deploy
 
 import java.io.{File, FileInputStream, IOException}
 import java.util.Properties
+import java.net.URI
 import java.util.jar.JarFile
 
 import scala.collection.JavaConversions._
@@ -105,6 +106,8 @@ private[spark] class SparkSubmitArguments(args: Seq[String]) {
       .getOrElse(defaultProperties.get("spark.cores.max").orNull)
     name = Option(name).getOrElse(defaultProperties.get("spark.app.name").orNull)
     jars = Option(jars).getOrElse(defaultProperties.get("spark.jars").orNull)
+    numExecutors = Option(numExecutors)
+      .getOrElse(defaultProperties.get("spark.executor.instances").orNull)
 
     // This supports env vars in older versions of Spark
     master = Option(master).getOrElse(System.getenv("MASTER"))
@@ -112,14 +115,23 @@ private[spark] class SparkSubmitArguments(args: Seq[String]) {
 
     // Try to set main class from JAR if no --class argument is given
     if (mainClass == null && !isPython && primaryResource != null) {
-      try {
-        val jar = new JarFile(primaryResource)
-        // Note that this might still return null if no main-class is set; we catch that later
-        mainClass = jar.getManifest.getMainAttributes.getValue("Main-Class")
-      } catch {
-        case e: Exception =>
-          SparkSubmit.printErrorAndExit("Cannot load main class from JAR: " + primaryResource)
-          return
+      val uri = new URI(primaryResource)
+      val uriScheme = uri.getScheme()
+
+      uriScheme match {
+        case "file" =>
+          try {
+            val jar = new JarFile(uri.getPath)
+            // Note that this might still return null if no main-class is set; we catch that later
+            mainClass = jar.getManifest.getMainAttributes.getValue("Main-Class")
+          } catch {
+            case e: Exception =>
+              SparkSubmit.printErrorAndExit(s"Cannot load main class from JAR $primaryResource")
+          }
+        case _ =>
+          SparkSubmit.printErrorAndExit(
+            s"Cannot load main class from JAR $primaryResource with URI $uriScheme. " +
+            "Please specify a class through --class.")
       }
     }
 
@@ -202,10 +214,14 @@ private[spark] class SparkSubmitArguments(args: Seq[String]) {
 
   /** Fill in values by parsing user options. */
   private def parseOpts(opts: Seq[String]): Unit = {
-    // Delineates parsing of Spark options from parsing of user options.
-    var inSparkOpts = true
+    val EQ_SEPARATED_OPT = """(--[^=]+)=(.+)""".r
+
     parse(opts)
 
+    /**
+     * NOTE: If you add or remove spark-submit options,
+     * modify NOT ONLY this file but also utils.sh
+     */
     def parse(opts: Seq[String]): Unit = opts match {
       case ("--name") :: value :: tail =>
         name = value
@@ -297,33 +313,20 @@ private[spark] class SparkSubmitArguments(args: Seq[String]) {
         verbose = true
         parse(tail)
 
+      case EQ_SEPARATED_OPT(opt, value) :: tail =>
+        parse(opt :: value :: tail)
+
+      case value :: tail if value.startsWith("-") =>
+        SparkSubmit.printErrorAndExit(s"Unrecognized option '$value'.")
+
       case value :: tail =>
-        if (inSparkOpts) {
-          value match {
-            // convert --foo=bar to --foo bar
-            case v if v.startsWith("--") && v.contains("=") && v.split("=").size == 2 =>
-              val parts = v.split("=")
-              parse(Seq(parts(0), parts(1)) ++ tail)
-            case v if v.startsWith("-") =>
-              val errMessage = s"Unrecognized option '$value'."
-              SparkSubmit.printErrorAndExit(errMessage)
-            case v =>
-              primaryResource =
-                if (!SparkSubmit.isShell(v)) {
-                  Utils.resolveURI(v).toString
-                } else {
-                  v
-                }
-              inSparkOpts = false
-              isPython = SparkSubmit.isPython(v)
-              parse(tail)
-          }
+        primaryResource = if (!SparkSubmit.isShell(value)) {
+          Utils.resolveURI(value).toString
         } else {
-          if (!value.isEmpty) {
-            childArgs += value
-          }
-          parse(tail)
+          value
         }
+        isPython = SparkSubmit.isPython(value)
+        childArgs ++= tail
 
       case Nil =>
     }
@@ -338,8 +341,9 @@ private[spark] class SparkSubmitArguments(args: Seq[String]) {
       """Usage: spark-submit [options] <app jar | python file> [app options]
         |Options:
         |  --master MASTER_URL         spark://host:port, mesos://host:port, yarn, or local.
-        |  --deploy-mode DEPLOY_MODE   Where to run the driver program: either "client" to run
-        |                              on the local machine, or "cluster" to run inside cluster.
+        |  --deploy-mode DEPLOY_MODE   Whether to launch the driver program locally ("client") or
+        |                              on one of the worker machines inside the cluster ("cluster")
+        |                              (Default: client).
         |  --class CLASS_NAME          Your application's main class (for Java / Scala apps).
         |  --name NAME                 A name of your application.
         |  --jars JARS                 Comma-separated list of local jars to include on the driver
@@ -359,6 +363,9 @@ private[spark] class SparkSubmitArguments(args: Seq[String]) {
         |                              classpath.
         |
         |  --executor-memory MEM       Memory per executor (e.g. 1000M, 2G) (Default: 1G).
+        |
+        |  --help, -h                  Show this help message and exit
+        |  --verbose, -v               Print additional debug output
         |
         | Spark standalone with cluster deploy mode only:
         |  --driver-cores NUM          Cores for driver (Default: 1).
@@ -381,16 +388,19 @@ private[spark] class SparkSubmitArguments(args: Seq[String]) {
 object SparkSubmitArguments {
   /** Load properties present in the given file. */
   def getPropertiesFromFile(file: File): Seq[(String, String)] = {
-    require(file.exists(), s"Properties file ${file.getName} does not exist")
+    require(file.exists(), s"Properties file $file does not exist")
+    require(file.isFile(), s"Properties file $file is not a normal file")
     val inputStream = new FileInputStream(file)
-    val properties = new Properties()
     try {
+      val properties = new Properties()
       properties.load(inputStream)
+      properties.stringPropertyNames().toSeq.map(k => (k, properties(k).trim))
     } catch {
       case e: IOException =>
-        val message = s"Failed when loading Spark properties file ${file.getName}"
+        val message = s"Failed when loading Spark properties file $file"
         throw new SparkException(message, e)
+    } finally {
+      inputStream.close()
     }
-    properties.stringPropertyNames().toSeq.map(k => (k, properties(k).trim))
   }
 }

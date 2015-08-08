@@ -32,7 +32,7 @@ import org.apache.hadoop.hive.serde2.avro.AvroSerDe
 
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.sql.catalyst.analysis._
-import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, NativeCommand}
+import org.apache.spark.sql.catalyst.plans.logical.{CacheCommand, LogicalPlan, NativeCommand}
 import org.apache.spark.sql.catalyst.util._
 import org.apache.spark.sql.hive._
 
@@ -58,7 +58,6 @@ class TestHiveContext(sc: SparkContext) extends LocalHiveContext(sc) {
 
   // By clearing the port we force Spark to pick a new one.  This allows us to rerun tests
   // without restarting the JVM.
-  System.clearProperty("spark.driver.port")
   System.clearProperty("spark.hostPort")
 
   override lazy val warehousePath = getTempFilePath("sparkHiveWarehouse").getCanonicalPath
@@ -104,7 +103,7 @@ class TestHiveContext(sc: SparkContext) extends LocalHiveContext(sc) {
   val inRepoTests = if (System.getProperty("user.dir").endsWith("sql" + File.separator + "hive")) {
     new File("src" + File.separator + "test" + File.separator + "resources" + File.separator)
   } else {
-    new File("sql" + File.separator + "hive" + File.separator + "src" + File.separator + "test" + 
+    new File("sql" + File.separator + "hive" + File.separator + "src" + File.separator + "test" +
       File.separator + "resources")
   }
 
@@ -131,6 +130,7 @@ class TestHiveContext(sc: SparkContext) extends LocalHiveContext(sc) {
     override lazy val analyzed = {
       val describedTables = logical match {
         case NativeCommand(describedTable(tbl)) => tbl :: Nil
+        case CacheCommand(tbl, _) => tbl :: Nil
         case _ => Nil
       }
 
@@ -292,15 +292,6 @@ class TestHiveContext(sc: SparkContext) extends LocalHiveContext(sc) {
         logger.asInstanceOf[org.apache.log4j.Logger].setLevel(org.apache.log4j.Level.WARN)
       }
 
-      // It is important that we RESET first as broken hooks that might have been set could break
-      // other sql exec here.
-      runSqlHive("RESET")
-      // For some reason, RESET does not reset the following variables...
-      runSqlHive("set datanucleus.cache.collections=true")
-      runSqlHive("set datanucleus.cache.collections.lazy=true")
-      // Lots of tests fail if we do not change the partition whitelist from the default.
-      runSqlHive("set hive.metastore.partition.name.whitelist.pattern=.*")
-
       loadedTables.clear()
       catalog.client.getAllTables("default").foreach { t =>
         logger.debug(s"Deleting table $t")
@@ -326,6 +317,14 @@ class TestHiveContext(sc: SparkContext) extends LocalHiveContext(sc) {
         FunctionRegistry.unregisterTemporaryUDF(udfName)
       }
 
+      // It is important that we RESET first as broken hooks that might have been set could break
+      // other sql exec here.
+      runSqlHive("RESET")
+      // For some reason, RESET does not reset the following variables...
+      runSqlHive("set datanucleus.cache.collections=true")
+      runSqlHive("set datanucleus.cache.collections.lazy=true")
+      // Lots of tests fail if we do not change the partition whitelist from the default.
+      runSqlHive("set hive.metastore.partition.name.whitelist.pattern=.*")
       configure()
 
       runSqlHive("USE default")

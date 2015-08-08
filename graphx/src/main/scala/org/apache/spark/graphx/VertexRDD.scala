@@ -97,7 +97,7 @@ class VertexRDD[@specialized VD: ClassTag](
 
   /** The number of vertices in the RDD. */
   override def count(): Long = {
-    partitionsRDD.map(_.size).reduce(_ + _)
+    partitionsRDD.map(_.size.toLong).reduce(_ + _)
   }
 
   /**
@@ -299,6 +299,18 @@ class VertexRDD[@specialized VD: ClassTag](
    */
   def reverseRoutingTables(): VertexRDD[VD] =
     this.mapVertexPartitions(vPart => vPart.withRoutingTable(vPart.routingTable.reverse))
+
+  /** Prepares this VertexRDD for efficient joins with the given EdgeRDD. */
+  def withEdges(edges: EdgeRDD[_, _]): VertexRDD[VD] = {
+    val routingTables = VertexRDD.createRoutingTables(edges, this.partitioner.get)
+    val vertexPartitions = partitionsRDD.zipPartitions(routingTables, true) {
+      (partIter, routingTableIter) =>
+        val routingTable =
+          if (routingTableIter.hasNext) routingTableIter.next() else RoutingTablePartition.empty
+        partIter.map(_.withRoutingTable(routingTable))
+    }
+    new VertexRDD(vertexPartitions)
+  }
 
   /** Generates an RDD of vertex attributes suitable for shipping to the edge partitions. */
   private[graphx] def shipVertexAttributes(

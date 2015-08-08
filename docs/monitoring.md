@@ -3,7 +3,7 @@ layout: global
 title: Monitoring and Instrumentation
 ---
 
-There are several ways to monitor Spark applications.
+There are several ways to monitor Spark applications: web UIs, metrics, and external instrumentation.
 
 # Web Interfaces
 
@@ -33,7 +33,7 @@ application's UI after the application has finished.
 
 If Spark is run on Mesos or YARN, it is still possible to reconstruct the UI of a finished
 application through Spark's history server, provided that the application's event logs exist.
-You can start a the history server by executing:
+You can start the history server by executing:
 
     ./sbin/start-history-server.sh <base-logging-directory>
 
@@ -97,7 +97,7 @@ represents an application's event logs. This creates a web interface at
     <td>
       Indicates whether the history server should use kerberos to login. This is useful
       if the history server is accessing HDFS files on a secure Hadoop cluster. If this is 
-      true it looks uses the configs <code>spark.history.kerberos.principal</code> and
+      true, it uses the configs <code>spark.history.kerberos.principal</code> and
       <code>spark.history.kerberos.keytab</code>. 
     </td>
   </tr>
@@ -132,6 +132,8 @@ represents an application's event logs. This creates a web interface at
 
 Note that in all of these UIs, the tables are sortable by clicking their headers,
 making it easy to identify slow tasks, data skew, etc.
+
+Note that the history server only displays completed Spark jobs. One way to signal the completion of a Spark job is to stop the Spark Context explicitly (`sc.stop()`), or in Python using the `with SparkContext() as sc:` to handle the Spark Context setup and tear down, and still show the job history on the UI.
 
 # Metrics
 

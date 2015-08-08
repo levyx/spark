@@ -89,12 +89,12 @@ if [ -z "$JAVA_HOME" ]; then
   exit -1
 fi
 
-VERSION=$(mvn help:evaluate -Dexpression=project.version 2>/dev/null | grep -v "INFO" | tail -n 1)
-if [ $? != 0 ]; then
+if ! which mvn &>/dev/null; then
     echo -e "You need Maven installed to build Spark."
     echo -e "Download Maven from https://maven.apache.org/"
     exit -1;
 fi
+VERSION=$(mvn help:evaluate -Dexpression=project.version 2>/dev/null | grep -v "INFO" | tail -n 1)
 
 JAVA_CMD="$JAVA_HOME"/bin/java
 JAVA_VERSION=$("$JAVA_CMD" -version 2>&1)
@@ -178,22 +178,22 @@ mkdir -p "$DISTDIR/lib"
 echo "Spark $VERSION built for Hadoop $SPARK_HADOOP_VERSION" > "$DISTDIR/RELEASE"
 
 # Copy jars
-cp $FWDIR/assembly/target/scala*/*assembly*hadoop*.jar "$DISTDIR/lib/"
-cp $FWDIR/examples/target/scala*/spark-examples*.jar "$DISTDIR/lib/"
+cp "$FWDIR"/assembly/target/scala*/*assembly*hadoop*.jar "$DISTDIR/lib/"
+cp "$FWDIR"/examples/target/scala*/spark-examples*.jar "$DISTDIR/lib/"
 
 # Copy example sources (needed for python and SQL)
 mkdir -p "$DISTDIR/examples/src/main"
-cp -r $FWDIR/examples/src/main "$DISTDIR/examples/src/" 
+cp -r "$FWDIR"/examples/src/main "$DISTDIR/examples/src/" 
 
 if [ "$SPARK_HIVE" == "true" ]; then
-  cp $FWDIR/lib_managed/jars/datanucleus*.jar "$DISTDIR/lib/"
+  cp "$FWDIR"/lib_managed/jars/datanucleus*.jar "$DISTDIR/lib/"
 fi
 
 # Copy license and ASF files
 cp "$FWDIR/LICENSE" "$DISTDIR"
 cp "$FWDIR/NOTICE" "$DISTDIR"
 
-if [ -e $FWDIR/CHANGES.txt ]; then
+if [ -e "$FWDIR"/CHANGES.txt ]; then
   cp "$FWDIR/CHANGES.txt" "$DISTDIR"
 fi
 

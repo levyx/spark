@@ -136,21 +136,19 @@ private class ColumnStatisticsAggregator(private val n: Int)
 
     var i = 0
     while (i < n) {
-      // merge mean together
-      if (other.currMean(i) != 0.0) {
+      if (nnz(i) + other.nnz(i) != 0.0) {
+        // merge mean together
         currMean(i) = (currMean(i) * nnz(i) + other.currMean(i) * other.nnz(i)) /
           (nnz(i) + other.nnz(i))
-      }
-      // merge m2n together
-      if (nnz(i) + other.nnz(i) != 0.0) {
+        // merge m2n together
         currM2n(i) += other.currM2n(i) + deltaMean(i) * deltaMean(i) * nnz(i) * other.nnz(i) /
           (nnz(i) + other.nnz(i))
-      }
-      if (currMax(i) < other.currMax(i)) {
-        currMax(i) = other.currMax(i)
-      }
-      if (currMin(i) > other.currMin(i)) {
-        currMin(i) = other.currMin(i)
+        if (currMax(i) < other.currMax(i)) {
+          currMax(i) = other.currMax(i)
+        }
+        if (currMin(i) > other.currMin(i)) {
+          currMin(i) = other.currMin(i)
+        }
       }
       i += 1
     }
@@ -419,7 +417,7 @@ class RowMatrix(
   /** Updates or verfires the number of rows. */
   private def updateNumRows(m: Long) {
     if (nRows <= 0) {
-      nRows == m
+      nRows = m
     } else {
       require(nRows == m,
         s"The number of rows $m is different from what specified or previously computed: ${nRows}.")

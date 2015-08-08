@@ -23,11 +23,13 @@ import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.{SparkConf, SparkContext, SparkEnv, SparkException, TestUtils}
 import org.apache.spark.deploy.SparkSubmit._
-import org.apache.spark.util.Utils
+import org.apache.spark.util.{ResetSystemProperties, Utils}
 import org.scalatest.FunSuite
 import org.scalatest.matchers.ShouldMatchers
 
-class SparkSubmitSuite extends FunSuite with ShouldMatchers {
+// Note: this suite mixes in ResetSystemProperties because SparkSubmit.main() sets a bunch
+// of properties that neeed to be cleared after tests.
+class SparkSubmitSuite extends FunSuite with ShouldMatchers with ResetSystemProperties {
   def beforeAll() {
     System.setProperty("spark.testing", "true")
   }
@@ -104,6 +106,18 @@ class SparkSubmitSuite extends FunSuite with ShouldMatchers {
       "--weird", "args")
     val appArgs = new SparkSubmitArguments(clArgs)
     appArgs.childArgs should be (Seq("some", "--weird", "args"))
+  }
+
+  test("handles arguments to user program with name collision") {
+    val clArgs = Seq(
+      "--name", "myApp",
+      "--class", "Foo",
+      "userjar.jar",
+      "--master", "local",
+      "some",
+      "--weird", "args")
+    val appArgs = new SparkSubmitArguments(clArgs)
+    appArgs.childArgs should be (Seq("--master", "local", "some", "--weird", "args"))
   }
 
   test("handles YARN cluster mode") {
@@ -246,6 +260,7 @@ class SparkSubmitSuite extends FunSuite with ShouldMatchers {
       "--class", SimpleApplicationTest.getClass.getName.stripSuffix("$"),
       "--name", "testApp",
       "--master", "local",
+      "--driver-java-options", "-Dspark.ui.enabled=false",
       unusedJar.toString)
     runSparkSubmit(args)
   }
@@ -260,6 +275,7 @@ class SparkSubmitSuite extends FunSuite with ShouldMatchers {
       "--name", "testApp",
       "--master", "local-cluster[2,1,512]",
       "--jars", jarsString,
+      "--driver-java-options", "-Dspark.ui.enabled=false",
       unusedJar.toString)
     runSparkSubmit(args)
   }

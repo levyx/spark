@@ -28,12 +28,29 @@ import subprocess
 import sys
 import tempfile
 import time
-import unittest
 import zipfile
+
+if sys.version_info[:2] <= (2, 6):
+    try:
+        import unittest2 as unittest
+    except ImportError:
+        sys.stderr.write('Please install unittest2 to test with Python 2.6 or earlier')
+        sys.exit(1)
+else:
+    import unittest
+
 
 from pyspark.context import SparkContext
 from pyspark.files import SparkFiles
 from pyspark.serializers import read_int
+
+_have_scipy = False
+try:
+    import scipy.sparse
+    _have_scipy = True
+except:
+    # No SciPy, but that's okay, we'll skip those tests
+    pass
 
 
 SPARK_HOME = os.environ["SPARK_HOME"]
@@ -103,11 +120,17 @@ class TestAddFile(PySparkTestCase):
     def test_add_py_file(self):
         # To ensure that we're actually testing addPyFile's effects, check that
         # this job fails due to `userlibrary` not being on the Python path:
+        # disable logging in log4j temporarily
+        log4j = self.sc._jvm.org.apache.log4j
+        old_level = log4j.LogManager.getRootLogger().getLevel()
+        log4j.LogManager.getRootLogger().setLevel(log4j.Level.FATAL)
         def func(x):
             from userlibrary import UserClass
             return UserClass().hello()
         self.assertRaises(Exception,
                           self.sc.parallelize(range(2)).map(func).first)
+        log4j.LogManager.getRootLogger().setLevel(old_level)
+
         # Add the file, so the job should now succeed:
         path = os.path.join(SPARK_HOME, "python/test_support/userlibrary.py")
         self.sc.addPyFile(path)
@@ -183,6 +206,30 @@ class TestRDDFunctions(PySparkTestCase):
         self.assertEqual(1, filtered_data.count())
         os.unlink(tempFile.name)
         self.assertRaises(Exception, lambda: filtered_data.count())
+
+    def test_sort_on_empty_rdd(self):
+        self.assertEqual([], self.sc.parallelize(zip([], [])).sortByKey().collect())
+
+    def test_itemgetter(self):
+        rdd = self.sc.parallelize([range(10)])
+        from operator import itemgetter
+        self.assertEqual([1], rdd.map(itemgetter(1)).collect())
+        self.assertEqual([(2, 3)], rdd.map(itemgetter(2, 3)).collect())
+
+    def test_sample(self):
+        rdd = self.sc.parallelize(range(0, 100), 4)
+        wo = rdd.sample(False, 0.1, 2).collect()
+        wo_dup = rdd.sample(False, 0.1, 2).collect()
+        self.assertSetEqual(set(wo), set(wo_dup))
+        wr = rdd.sample(True, 0.2, 5).collect()
+        wr_dup = rdd.sample(True, 0.2, 5).collect()
+        self.assertSetEqual(set(wr), set(wr_dup))
+        wo_s10 = rdd.sample(False, 0.3, 10).collect()
+        wo_s20 = rdd.sample(False, 0.3, 20).collect()
+        self.assertNotEqual(set(wo_s10), set(wo_s20))
+        wr_s11 = rdd.sample(True, 0.4, 11).collect()
+        wr_s21 = rdd.sample(True, 0.4, 21).collect()
+        self.assertNotEqual(set(wr_s11), set(wr_s21))
 
 
 class TestIO(PySparkTestCase):
@@ -268,8 +315,9 @@ class TestSparkSubmit(unittest.TestCase):
         pattern = re.compile(r'^ *\|', re.MULTILINE)
         content = re.sub(pattern, '', content.strip())
         path = os.path.join(self.programDir, name + ".zip")
-        with zipfile.ZipFile(path, 'w') as zip:
-            zip.writestr(name, content)
+        zip = zipfile.ZipFile(path, 'w')
+        zip.writestr(name, content)
+        zip.close()
         return path
 
     def test_single_script(self):
@@ -359,5 +407,21 @@ class TestSparkSubmit(unittest.TestCase):
         self.assertIn("[2, 4, 6]", out)
 
 
+@unittest.skipIf(not _have_scipy, "SciPy not installed")
+class SciPyTests(PySparkTestCase):
+    """General PySpark tests that depend on scipy """
+
+    def test_serialize(self):
+        from scipy.special import gammaln
+        x = range(1, 5)
+        expected = map(gammaln, x)
+        observed = self.sc.parallelize(x).map(gammaln).collect()
+        self.assertEqual(expected, observed)
+
+
 if __name__ == "__main__":
+    if not _have_scipy:
+        print "NOTE: Skipping SciPy tests as it does not seem to be installed"
     unittest.main()
+    if not _have_scipy:
+        print "NOTE: SciPy tests were skipped as it does not seem to be installed"
